@@ -1,4 +1,4 @@
-name: Auto Merge (gate = CFN deploy completed)
+nname: Auto Merge (continue even if some fail)
 
 on:
   push:
@@ -13,18 +13,21 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     strategy:
-      max-parallel: 1
-      fail-fast: false
+      max-parallel: 1          # run strictly in order: f1 -> f9
+      fail-fast: false         # don't stop the whole matrix if one item fails
       matrix:
         target: [f1, f2, f3, f4, f5, f6, f7, f8, f9]
     env:
       DEPLOY_WORKFLOW_NAME: "CloudFormation Build and Deploy"
       POLL_INTERVAL_SEC: "10"
-      POLL_TIMEOUT_MIN: "30"
+      POLL_TIMEOUT_MIN: "20"
     steps:
       - uses: actions/checkout@v4
 
+      # 1) Try to merge dev -> target (don't fail the job if this step fails)
       - name: Merge dev -> ${{ matrix.target }}
+        id: merge
+        continue-on-error: true
         uses: devmasx/merge-branch@master
         with:
           type: now
@@ -33,13 +36,17 @@ jobs:
           message: Merge dev into ${{ matrix.target }}
           github_token: ${{ secrets.GH_AUTO_MERGER }}
 
+      # 2) If merge succeeded, get HEAD sha of target
       - name: Get HEAD sha of ${{ matrix.target }} after merge
         id: sha
+        if: ${{ steps.merge.outcome == 'success' }}
         run: |
           git fetch origin ${{ matrix.target }} --depth=1 || true
           echo "head_sha=$(git rev-parse origin/${{ matrix.target }})" >> "$GITHUB_OUTPUT"
 
+      # 3) If merge succeeded, wait until CFN deploy workflow on that branch is COMPLETED
       - name: Wait until "${{ env.DEPLOY_WORKFLOW_NAME }}" on ${{ matrix.target }} is COMPLETED
+        if: ${{ steps.merge.outcome == 'success' }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_AUTO_MERGER }}
@@ -66,11 +73,22 @@ jobs:
                   if (run.conclusion !== 'success') {
                     core.warning(`Deploy on ${branch} ended with: ${run.conclusion}`);
                   }
-                  return; // completed (success or failure) => proceed to next branch
+                  return; // completed (success or failure) => proceed to next matrix item
                 }
               } else {
                 core.info("No matching deploy run yet.");
               }
               await sleep(interval);
             }
-            core.setFailed(`Timeout waiting deploy on ${branch} to complete`)
+            core.warning(`Timeout waiting deploy on ${branch} to complete (moving on)`);
+
+      # 4) Summary line per branch (always prints; shows whether we merged or skipped)
+      - name: Summary for ${{ matrix.target }}
+        run: |
+          echo "Branch: ${{ matrix.target }}"
+          echo "Merge outcome: ${{ steps.merge.outcome }}"
+          if [ "${{ steps.merge.outcome }}" != "success" ]; then
+            echo ">> Merge failed or was blocked for ${{ matrix.target }} — continuing to next branch."
+          else
+            echo ">> Merge succeeded and deploy waited (completed)."
+          fi
