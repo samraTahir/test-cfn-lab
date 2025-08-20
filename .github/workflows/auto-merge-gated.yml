@@ -1,4 +1,4 @@
-nname: Auto Merge (continue even if some fail)
+name: Auto Merge (continue even if some fail)
 
 on:
   push:
