@@ -1,0 +1,76 @@
+name: Auto Merge (gate = CFN deploy completed)
+
+on:
+  push:
+    branches: [dev]
+
+concurrency:
+  group: auto-merge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backmerge-seq:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        target: [f1, f2, f3, f4, f5, f6, f7, f8, f9]
+    env:
+      DEPLOY_WORKFLOW_NAME: "CloudFormation Build and Deploy"
+      POLL_INTERVAL_SEC: "10"
+      POLL_TIMEOUT_MIN: "30"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Merge dev -> ${{ matrix.target }}
+        uses: devmasx/merge-branch@master
+        with:
+          type: now
+          from_branch: dev
+          target_branch: ${{ matrix.target }}
+          message: Merge dev into ${{ matrix.target }}
+          github_token: ${{ secrets.GH_AUTO_MERGER }}
+
+      - name: Get HEAD sha of ${{ matrix.target }} after merge
+        id: sha
+        run: |
+          git fetch origin ${{ matrix.target }} --depth=1 || true
+          echo "head_sha=$(git rev-parse origin/${{ matrix.target }})" >> "$GITHUB_OUTPUT"
+
+      - name: Wait until "${{ env.DEPLOY_WORKFLOW_NAME }}" on ${{ matrix.target }} is COMPLETED
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_AUTO_MERGER }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = "${{ matrix.target }}";
+            const expectedName = process.env.DEPLOY_WORKFLOW_NAME;
+            const wantSha = "${{ steps.sha.outputs.head_sha }}";
+            const interval = Number(process.env.POLL_INTERVAL_SEC)*1000;
+            const timeout  = Number(process.env.POLL_TIMEOUT_MIN)*60*1000;
+            const start = Date.now();
+            async function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+            core.info(`Waiting for "${expectedName}" on ${branch} (sha ${wantSha}) to be COMPLETED ...`);
+            while (Date.now() - start < timeout) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner, repo, branch, event: 'push', per_page: 50
+              });
+              let run = data.workflow_runs.find(r => r.head_sha === wantSha && r.name === expectedName)
+                      || data.workflow_runs.find(r => r.name === expectedName);
+              if (run) {
+                core.info(`Run ${run.id}: status=${run.status} conclusion=${run.conclusion}`);
+                if (run.status === 'completed') {
+                  if (run.conclusion !== 'success') {
+                    core.warning(`Deploy on ${branch} ended with: ${run.conclusion}`);
+                  }
+                  return; // completed (success or failure) => proceed to next branch
+                }
+              } else {
+                core.info("No matching deploy run yet.");
+              }
+              await sleep(interval);
+            }
+            core.setFailed(`Timeout waiting deploy on ${branch} to complete`)

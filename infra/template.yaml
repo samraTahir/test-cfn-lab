@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Per-branch S3 bucket via CloudFormation (demo)
+
+Parameters:
+  Branch:
+    Type: String
+    Description: Branch name (e.g., dev, f1, f2)
+  CommitSha:
+    Type: String
+    Description: Commit SHA for traceability
+
+Resources:
+  DemoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Lowercase, short, globally unique (account+region+branch help uniqueness)
+      BucketName: !Sub "cfn-demo-${AWS::AccountId}-${AWS::Region}-${Branch}"
+      VersioningConfiguration:
+        Status: Suspended
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+
+Outputs:
+  BucketName:
+    Value: !Ref DemoBucket
+    Description: Created/updated bucket name
+  Info:
+    Value: !Sub "Branch=${Branch}, Sha=${CommitSha}"

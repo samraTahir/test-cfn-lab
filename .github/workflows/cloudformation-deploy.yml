@@ -1,0 +1,49 @@
+name: CloudFormation Build and Deploy
+
+on:
+  push:
+    branches: [dev, f1, f2, f3, f4, f5, f6, f7, f8, f9]
+
+concurrency:
+  group: cfn-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Compute names
+        id: names
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "stack=cf-demo-$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name "${{ steps.names.outputs.stack }}" \
+            --template-file infra/template.yaml \
+            --parameter-overrides \
+              Branch="${{ steps.names.outputs.branch }}" \
+              CommitSha="${{ github.sha }}" \
+            --no-fail-on-empty-changeset \
+            --region "${AWS_REGION}"
+
+      - name: Show stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.names.outputs.stack }}" \
+            --query "Stacks[0].Outputs" \
+            --output table --region "${AWS_REGION}"
