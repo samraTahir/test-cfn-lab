@@ -18,7 +18,7 @@ jobs:
       matrix:
         target: [f1, f2, f3, f4, f5, f6, f7, f8, f9]
     env:
-      DEPLOY_WORKFLOW_NAME: "CloudFormation BUILD And DEPLOY"
+      DEPLOY_WORKFLOW_NAME: "CloudFormation Build and Deploy"
       POLL_INTERVAL_SEC: "10"
       POLL_TIMEOUT_MIN: "20"
     steps:
